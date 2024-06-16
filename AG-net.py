@@ -175,36 +175,36 @@ def get_SRs_coords(image_batch, loc_device, kappa=8):
 
 """ Given the feature maps, we now want to begin the intra-attention mechanism. """
 
-class Intra_Self_Attn(nn.Module):
+class IntraSelfAttn(nn.Module):
     """ 
         Self Attention Layer adapted from SAGAN Implementation available at https://github.com/heykeetae/Self-Attention-GAN/blob/master/sagan_models.py
     """
-    def __init__(self, in_dim = 256):
-        super(Intra_Self_Attn,self).__init__()
-        self.chanel_in = in_dim
+    def __init__(self, in_channels = 2048, B = 8):
+        super(IntraSelfAttn,self).__init__()
+        self.chanel_in = in_channels
         
-        self.query_conv = nn.Conv2d(in_channels = in_dim , out_channels = in_dim//8 , kernel_size= 1) # f(x)
-        self.key_conv = nn.Conv2d(in_channels = in_dim , out_channels = in_dim//8 , kernel_size= 1) # g(x)
-        self.value_conv = nn.Conv2d(in_channels = in_dim , out_channels = in_dim , kernel_size= 1) # h(x)
+        self.query_conv = nn.Conv2d(in_channels = in_channels , out_channels = in_channels//8 , kernel_size= 1) # f(x)
+        self.key_conv = nn.Conv2d(in_channels = in_channels , out_channels = in_channels//8 , kernel_size= 1) # g(x)
+        self.value_conv = nn.Conv2d(in_channels = in_channels , out_channels = in_channels , kernel_size= 1) # h(x)
         self.delta = nn.Parameter(torch.zeros(1)) # Delta initialized to be 0
 
         self.softmax  = nn.Softmax(dim=-1) 
     def forward(self,x):
         """
             inputs :
-                x : input Resnet50 feature maps for a given image B X C X H X W
+                x : input feature maps( B X C X W X H)
             returns :
-                out : Intra-self attention value + input feature (same size)
+                out : self attention value + input feature (same size)
         """
-        m_batchsize,C,width ,height = x.size()
-        proj_query  = self.query_conv(x).view(m_batchsize,-1,width*height).permute(0,2,1) # B X C X (N)
-        proj_key =  self.key_conv(x).view(m_batchsize,-1,width*height) # B X C x (W*H)
-        energy =  torch.bmm(proj_query,proj_key) 
+        B,C,width ,height = x.size()
+        proj_query  = self.query_conv(x).view(B,-1,width*height).permute(0,2,1) # B X CX(N)
+        proj_key =  self.key_conv(x).view(B,-1,width*height) # B X C x (*W*H)
+        energy =  torch.bmm(proj_query,proj_key) # transpose check
         attention = self.softmax(energy) # BX (N) X (N) 
-        proj_value = self.value_conv(x).view(m_batchsize,-1,width*height) # B X C X N
+        proj_value = self.value_conv(x).view(B,-1,width*height) # B X C X N
 
         out = torch.bmm(proj_value,attention.permute(0,2,1) )
-        out = out.view(m_batchsize,C,width,height)
+        out = out.view(B,C,width,height)
         
         out = self.delta*out + x
         return out
@@ -342,7 +342,7 @@ class AG_Net(nn.Module):
         self.kap = kappa
         self.kappa_max = 1+kappa*(kappa+1)//2
         self.c_res = CustomResNet50(device).to(device)
-        self.intra = Intra_Self_Attn().to(device_loc)
+        self.intra = IntraSelfAttn().to(device_loc)
         self.se_res = SE_Residual(channels= 2048, Rp1= self.kappa_max).to(device_loc)
         self.inter = InterSelfAttn(B= batch_size_loc).to(device_loc)
         self.classify = Classify(batch_size= batch_size_loc, in_dim= self.kappa_max).to(device_loc)
@@ -356,6 +356,8 @@ class AG_Net(nn.Module):
         x = self.inter(x, region_counts)
         x = self.classify(x)        
         return x
+    
+    
 
 kappa_global = 8
 net = AG_Net(kappa = kappa_global, batch_size_loc=batch_sze, device_loc= device).to(device)
@@ -372,9 +374,10 @@ criterion = nn.CrossEntropyLoss()
 optimizer = optim.SGD(net.parameters(), lr=1e-5, momentum=0.99)
 
 
-def load_checkpoint(model, optimizer, filename='AG_net_weights2.pth'):
+def load_checkpoint(model, optimizer, train_indices, test_indices, filename='AG_net_weights2.pth'):
     # Note: Input model & optimizer should be pre-defined.  This routine only updates their states.
     start_epoch = 0
+    loaded_flag = False
     if os.path.isfile(filename):
         print("=> loading checkpoint '{}'".format(filename))
         checkpoint = torch.load(filename)
@@ -383,27 +386,30 @@ def load_checkpoint(model, optimizer, filename='AG_net_weights2.pth'):
         optimizer.load_state_dict(checkpoint['optimizer'])
         train_indices = checkpoint['train_indices']
         test_indices = checkpoint['test_indices']
-        train_dataset = torch.utils.data.Subset(full_dataset, train_indices)
-        test_dataset = torch.utils.data.Subset(full_dataset, test_indices)
-        batched_train_data = torch.utils.data.DataLoader(train_dataset, batch_size = batch_sze, shuffle = True)
+        loaded_flag = True
         print("=> loaded checkpoint '{}' (epoch {})"
                   .format(filename, checkpoint['epoch']))
     else:
         print("=> no checkpoint found at '{}'".format(filename))
-        start_epoch = 0
 
-    return model, optimizer, start_epoch
+    return model, optimizer, start_epoch, train_indices, test_indices, loaded_flag
 
 # Loading the saved model
-#""" 
-net, optimizer, start_epoch = load_checkpoint(net, optimizer)
+ 
+net, optimizer, start_epoch, train_indices, test_indices, loaded_flag = load_checkpoint(net, optimizer, train_indices, test_indices)
 net = net.to(device)
-# now individually transfer the optimizer parts...
-for state in optimizer.state.values():
-    for k, v in state.items():
-        if isinstance(v, torch.Tensor):
-            state[k] = v.to(device)
-#"""
+
+if loaded_flag:
+    # now individually transfer the optimizer parts...
+    for state in optimizer.state.values():
+        for k, v in state.items():
+            if isinstance(v, torch.Tensor):
+                state[k] = v.to(device)
+
+    train_dataset = torch.utils.data.Subset(full_dataset, train_indices)
+    test_dataset = torch.utils.data.Subset(full_dataset, test_indices)
+    batched_train_data = torch.utils.data.DataLoader(train_dataset, batch_size = batch_sze, shuffle = True)
+
 
 net.train()
 end_epoch = 50
@@ -454,10 +460,6 @@ save_path = os.path.join(notebook_dir, filename)
 state = {'epoch': epoch + 1, 'state_dict': net.state_dict(),
              'optimizer': optimizer.state_dict(), 'train_indices': train_indices, 'test_indices': test_indices}
 torch.save(state, filename)
-
-
-""" Testing the Model. """
-
 
 # Define a DataLoader for the test dataset
 batch_size_test = 8
