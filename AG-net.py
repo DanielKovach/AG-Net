@@ -53,6 +53,9 @@ brks = [i for i in range(1,len(full_indices)) if full_indices[i] < full_indices[
 split_indices = [full_indices[x:y] for x,y in zip([0]+brks,brks+[None])]
 
 
+# We do not want to include the 257th category, clutter, because they don't use it in the paper, so 
+split_indices = split_indices[:256]
+
 # Get 60 random indices from each category.
 rand_indices = [random.sample(i, k = 60) for i in split_indices]
 # Concatenate the list of lists to a list.
@@ -71,7 +74,7 @@ train_dataset = torch.utils.data.Subset(full_dataset, train_indices)
 test_dataset = torch.utils.data.Subset(full_dataset, test_indices)
 
 
-# Check to see if they share any images. Note that this can take approximately 1 minute.
+# Optional: Check to see if they share any images. Note that this can take approximately 1 minute.
 assert not bool(set(train_dataset) & set(test_dataset))
 
 
