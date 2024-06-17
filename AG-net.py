@@ -15,9 +15,11 @@ from pytorchcv.models.common import SEBlock
 import random
 import itertools
 
-device = torch.device('cuda:0' if torch.cuda.is_available() else 'cpu')
-torch.cuda.set_per_process_memory_fraction(.9, device=device)
-
+if torch.cuda.is_available():
+    device = torch.device('cuda:0')
+    torch.cuda.set_per_process_memory_fraction(.9, device=device)
+else:
+    device = torch.device('cpu')        
 
 print(device)
 
@@ -377,13 +379,13 @@ criterion = nn.CrossEntropyLoss()
 optimizer = optim.SGD(net.parameters(), lr=1e-5, momentum=0.99)
 
 
-def load_checkpoint(model, optimizer, train_indices, test_indices, filename='AG_net_weights2.pth'):
+def load_checkpoint(model, optimizer, train_indices, test_indices, device, filename='AG_net_weights2.pth'):
     # Note: Input model & optimizer should be pre-defined.  This routine only updates their states.
     start_epoch = 0
     loaded_flag = False
     if os.path.isfile(filename):
         print("=> loading checkpoint '{}'".format(filename))
-        checkpoint = torch.load(filename)
+        checkpoint = torch.load(filename, map_location=device)
         start_epoch = checkpoint['epoch']
         model.load_state_dict(checkpoint['state_dict'])
         optimizer.load_state_dict(checkpoint['optimizer'])
@@ -399,7 +401,7 @@ def load_checkpoint(model, optimizer, train_indices, test_indices, filename='AG_
 
 # Loading the saved model
  
-net, optimizer, start_epoch, train_indices, test_indices, loaded_flag = load_checkpoint(net, optimizer, train_indices, test_indices)
+net, optimizer, start_epoch, train_indices, test_indices, loaded_flag = load_checkpoint(net, optimizer, train_indices, test_indices, device)
 net = net.to(device)
 
 if loaded_flag:
