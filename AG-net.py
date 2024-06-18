@@ -1,8 +1,6 @@
 import numpy as np
 import cv2 as cv
-import matplotlib.pyplot as plt
 from sklearn.mixture import GaussianMixture as GMM
-import pandas as pd
 from collections import defaultdict
 import torch
 import torchvision
