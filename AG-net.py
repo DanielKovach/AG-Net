@@ -13,10 +13,10 @@ from pytorchcv.models.common import SEBlock
 import random
 import itertools
 
-if torch.backends.mps.is_available(): device = torch.device("mps")
-elif torch.cuda.is_available():
+if torch.cuda.is_available():
     device = torch.device('cuda:0')
     torch.cuda.set_per_process_memory_fraction(.9, device=device)
+elif torch.backends.mps.is_available(): device = torch.device("mps")
 else:
     device = torch.device('cpu')       
 
@@ -137,6 +137,7 @@ def get_SRs_coords(image_batch, loc_device, kappa=8):
 
             if kappa_loc > 1:  # Only fit GMM if there are at least 2 unique points
                 gmm_pts = GMM(n_components=kappa_loc, covariance_type='full', init_params='kmeans').fit(unique_pts)
+                # Note how we apply predict to the non-unique points, putting more weights onto locations with more than one kp.
                 gmm_labels = gmm_pts.predict(pts)
 
                 # Sort pts into clusters
@@ -159,6 +160,7 @@ def get_SRs_coords(image_batch, loc_device, kappa=8):
                 for i, itemi in Prim_SRs.items():
                     for j, itemj in Prim_SRs.items():
                         if i <= j:
+                            # Note that x1,x2 are computer from the "y"-values. This is NOT a typo, an implicit transpose operation is used because numpy image arrays and torch image tensors are transpositions along the H x W dimensions.
                             x1, x2 = min(itemi['min_y'], itemj['min_y']), max(itemi['max_y'], itemj['max_y'])
                             y1, y2 = min(itemi['min_x'], itemj['min_x']), max(itemi['max_x'], itemj['max_x'])
 
@@ -184,25 +186,24 @@ class IntraSelfAttn(nn.Module):
         self.query_conv = nn.Conv2d(in_channels = in_channels , out_channels = in_channels//8 , kernel_size= 1) # f(x)
         self.key_conv = nn.Conv2d(in_channels = in_channels , out_channels = in_channels//8 , kernel_size= 1) # g(x)
         self.value_conv = nn.Conv2d(in_channels = in_channels , out_channels = in_channels , kernel_size= 1) # h(x)
-        self.delta = nn.Parameter(torch.zeros(1)) # Delta initialized to be 0
+        self.delta = nn.Parameter(torch.zeros(1)) # Delta initialized to be 0 as the paper suggests.
 
         self.softmax  = nn.Softmax(dim=-1) 
     def forward(self,x):
         """
             inputs :
-                x : input feature maps( B X C X W X H)
+                x : input feature maps (B x C x W x H)
             returns :
                 out : self attention value + input feature (same size)
         """
         B,C,width ,height = x.size()
-        proj_query  = self.query_conv(x).view(B,-1,width*height).permute(0,2,1) # B X CX(N)
-        proj_key =  self.key_conv(x).view(B,-1,width*height) # B X C x (*W*H)
-        energy =  torch.bmm(proj_query,proj_key) # transpose check
-        attention = self.softmax(energy) # BX (N) X (N) 
-        proj_value = self.value_conv(x).view(B,-1,width*height) # B X C X N
+        proj_query  = self.query_conv(x).view(B,-1,width*height).permute(0,2,1) # B x C x W*H
+        proj_key =  self.key_conv(x).view(B,-1,width*height) # B x C x W*H
+        energy =  torch.bmm(proj_query,proj_key) 
+        attention = self.softmax(energy) # B x W*H x W*H 
+        proj_value = self.value_conv(x).view(B,-1,width*height) # B x C x W*H
 
-        out = torch.bmm(proj_value,attention.permute(0,2,1) )
-        out = out.view(B,C,width,height)
+        out = torch.bmm(proj_value,attention.permute(0,2,1) ).view(B,C,width,height)
         
         out = self.delta*out + x
         return out
@@ -259,7 +260,7 @@ class InterSelfAttn(nn.Module):
         
     def forward(self, feature_tens, region_counts):
         B = len(region_counts)
-        r = 7
+        r = feature_tens.size(-1)
 
         feature_list = torch.split(feature_tens, region_counts)
         
@@ -267,43 +268,48 @@ class InterSelfAttn(nn.Module):
         outputs = []
         for i in range(B):
             R = region_counts[i]
-            regions = feature_list[i]  # (R, C, H, W)
+            regions = feature_list[i]  # R x C x H x W
             
             
             # Compute u_{r,r'}
-            u_r = self.W_u[i](regions).unsqueeze(0)  # (1, R, C/8, H, W)
-            u_r_prime = self.W_u_prime[i](regions).unsqueeze(1)  # (R, 1, C/8, H, W)
-            u_r_r_prime = torch.tanh(u_r + u_r_prime)  # (R, R, C/8, H, W)
+            u_r = self.W_u[i](regions).unsqueeze(0)  # 1 x R x C/8 x H x W
+            u_r_prime = self.W_u_prime[i](regions).unsqueeze(1)  # R x 1 x C/8 x H x W
+            u_r_r_prime = torch.tanh(u_r + u_r_prime)  # R x R x C/8 x H x W
             
             # Compute m_{r,r'}
-            m_r_r_prime = self.W_m[i](u_r_r_prime.view(R * R, -1, r, r)).view(R, R, 1, r, r)  # (R, R, 1, H, W)
+            m_r_r_prime = self.W_m[i](u_r_r_prime.view(R * R, -1, r, r)).view(R, R, 1, r, r)  # R x R x 1 x H x W 
             m_r_r_prime = torch.sigmoid(m_r_r_prime)
             
             # Aggregate attentional features
-            alpha_r = torch.sum(m_r_r_prime * regions.unsqueeze(1), dim=0)  # (R, C, H, W)
+            alpha_r = torch.sum(m_r_r_prime * regions.unsqueeze(1), dim=0)  # R x C x H x W
             
             # Compute weights w_r
-            w_r = self.W_alpha[i](alpha_r).view(R, -1)  # (R, num_features)
-            w_r = F.softmax(w_r, dim=0).view(R, 1, r, r)  # (R, 1, H, W)
+            w_r = self.W_alpha[i](alpha_r).view(R, -1)  
+            w_r = F.softmax(w_r, dim=0).view(R, 1, r, r)  # R x 1 x H x W
             
             # Combine regional features
-            f_hat = torch.sum(alpha_r * w_r, dim=0)  # (C, H, W)
+            f_hat = torch.sum(alpha_r * w_r, dim=0)  # C x H x W
             outputs.append(f_hat)
         
-        outputs = torch.stack(outputs, dim=0)  # (B, C, H, W)
+        outputs = torch.stack(outputs, dim=0)  # B x C x H x W
         
         return outputs
     
 class Classify(nn.Module):
-    def __init__(self, batch_size = 8, in_dim = 37, C = 2048, num_classes = 256, r = 7):
+    def __init__(self, C = 2048, num_classes = 256):
         super(Classify, self).__init__()
         self.softmax = nn.Softmax(dim = 1)
-        # Layers for classification
+        # Layers for summarizing
         self.gap = nn.AdaptiveAvgPool2d((1, 1))
         self.gmp = nn.AdaptiveMaxPool2d((1, 1))
         
+        # Layers for generating weights of gmp
         self.Womega = nn.Linear(C, 1)
+
+        # Note that this is redundant and will be removed in a later version after we retrain the model with the new number of parameters.
         self.bomega = nn.Parameter(torch.zeros(1))
+
+        # Final dense layer which learns to take the summarized features and classify them.
         self.fc = nn.Linear(C, num_classes)
 
     def forward(self, x):
@@ -343,7 +349,7 @@ class AG_Net(nn.Module):
         self.intra = IntraSelfAttn().to(device_loc)
         self.se_res = SE_Residual(channels= 2048, Rp1= self.kappa_max).to(device_loc)
         self.inter = InterSelfAttn(B= batch_size_loc).to(device_loc)
-        self.classify = Classify(batch_size= batch_size_loc, in_dim= self.kappa_max).to(device_loc)
+        self.classify = Classify().to(device_loc)
     
     def forward(self, x):
         res_feats = self.c_res(x)
