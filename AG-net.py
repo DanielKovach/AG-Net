@@ -59,14 +59,14 @@ split_indices = [full_indices[x:y] for x,y in zip([0]+brks,brks+[None])]
 split_indices = split_indices[:256]
 
 # Get 60 random indices from each category.
-rand_indices = [filter(random.sample(i, k = 60)) for i in split_indices]
+rand_indices = [sorted(random.sample(i, k = 60)) for i in split_indices]
 # Concatenate the list of lists to a list.
 train_indices = list(itertools.chain.from_iterable(rand_indices))
 
 assert len(train_indices) == 256*60
 
 # Get the indices not included in the train indices.
-get_test_indices = [list(set(split_indices[i]) - set(rand_indices[i])) for i in range(len(split_indices))]
+get_test_indices = [set(split_indices[i]) - set(rand_indices[i]) for i in range(len(split_indices))]
 # Concatenate the list of lists to a list.
 test_indices = list(itertools.chain.from_iterable(get_test_indices))
 
