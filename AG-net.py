@@ -15,11 +15,12 @@ from pytorchcv.models.common import SEBlock
 import random
 import itertools
 
-if torch.cuda.is_available():
+if torch.backends.mps.is_available(): device = torch.device("mps")
+elif torch.cuda.is_available():
     device = torch.device('cuda:0')
     torch.cuda.set_per_process_memory_fraction(.9, device=device)
 else:
-    device = torch.device('cpu')        
+    device = torch.device('cpu')       
 
 print(device)
 
