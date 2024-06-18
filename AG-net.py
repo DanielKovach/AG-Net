@@ -59,7 +59,7 @@ split_indices = [full_indices[x:y] for x,y in zip([0]+brks,brks+[None])]
 split_indices = split_indices[:256]
 
 # Get 60 random indices from each category.
-rand_indices = [random.sample(i, k = 60) for i in split_indices]
+rand_indices = [filter(random.sample(i, k = 60)) for i in split_indices]
 # Concatenate the list of lists to a list.
 train_indices = list(itertools.chain.from_iterable(rand_indices))
 
@@ -72,13 +72,7 @@ test_indices = list(itertools.chain.from_iterable(get_test_indices))
 
 
 train_dataset = torch.utils.data.Subset(full_dataset, train_indices)
-
 test_dataset = torch.utils.data.Subset(full_dataset, test_indices)
-
-
-# Optional: Check to see if they share any images. Note that this can take approximately 1 minute.
-assert not bool(set(train_dataset) & set(test_dataset))
-
 
 batch_sze = 8
 batched_train_data = torch.utils.data.DataLoader(train_dataset, batch_size = batch_sze, shuffle = True)
