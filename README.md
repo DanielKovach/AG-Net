@@ -1,5 +1,5 @@
 # AG-Net
-This is an implementation of AG-Net as described in the paper "Attend and Guide (AG-Net): A Keypoints-driven Attention-based Deep Network for Image Recognition" by  Asish Bera, Zachary Wharton, Yonghuai Liu, Nik Bessis, and Ardhendu Behera. I include the weights for the model which achieves 98.3% accuracy on the test data. 
+This is an implementation (the first public implementation as far as I know) of AG-Net as described in the paper "Attend and Guide (AG-Net): A Keypoints-driven Attention-based Deep Network for Image Recognition" by  Asish Bera, Zachary Wharton, Yonghuai Liu, Nik Bessis, and Ardhendu Behera. I include the weights for the model which achieves 98.3% accuracy on the test data. 
 
 I include the iPython Notebook where I derived the model to "show my work", but I also include a python file which contains just the necessary code to train and test.
 
